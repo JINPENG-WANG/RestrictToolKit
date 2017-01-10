@@ -1,0 +1,215 @@
+#!/usr/bin/perl -w
+use strict;
+chomp(my $path=`pwd`);
+my $RestrictSimulation;
+unless(-e "$path/RestrictSimulation"){
+open  $RestrictSimulation,">>$path/RestrictSimulation"||die "cannot write to RestrictSimulation:$!";
+}
+else{
+print STDERR "Error: RestrictSimulation already exists! Please delete it if you want to reconfigure!\n";exit(0);
+}
+
+print $RestrictSimulation <<EOF;
+#!/usr/bin/perl -w
+use strict;
+my \$path="$path";
+my(\$ref,\$front_enzyme,\$later_enzyme,\$gff,\$blast,\$result_dir);
+my \$range1=90;
+my \$range2=750;
+\$blast="no";
+parse_parameters();
+print "Analysing the parameters USER input...\\n";
+system("mkdir \$path/run_results/\$result_dir");
+if(\$blast eq "yes"){ check_database();}
+print "The REFERENCE file is \$ref.\\nThe GFF file is \$gff.\\nThe ENZYME1 is \$front_enzyme.\\nThe ENZYME2 is \$later_enzyme.\\n";
+print "The RANGE is \$range1 bp --- \$range2 bp.\\nThe -b option is \$blast.\\n";
+print "Now execute  survey_restrict_locs.pl\\n";
+system ("perl \$path/scripts/survey_restrict_locs.pl -ref \$ref -e1 \$front_enzyme -e2 \$later_enzyme -p \$path -dir \$result_dir -r1 \$range1 -r2 \$range2");
+print "Now execute  ratio_fragments_mapped_to_CDS.pl\\n";
+system ("perl \$path/scripts/ratio_fragments_mapped_to_CDS.pl -ref \$ref -gff \$gff -p \$path -dir \$result_dir -e1 \$front_enzyme -e2 \$later_enzyme");
+print "Now execute  ratio_fragments_mapped_to_InterGenic.pl\\n";
+system ("perl \$path/scripts/ratio_fragments_mapped_to_InterGenic.pl -ref \$ref -gff \$gff -p \$path -dir \$result_dir -e1 \$front_enzyme -e2 \$later_enzyme");
+if(\$blast eq "yes"){
+print "Now execute  blastall program\\n";
+system ("blastall -i \$path/run_results/\$result_dir/seq_of_frags_in_range_of_\${ref}_by_\${front_enzyme}_and_\${later_enzyme}.txt -d \$path/reference/\${ref} -o \$path/run_results/\$result_dir/blastn_alignments_of_\${ref}_by_\${front_enzyme}_and_\${later_enzyme}.txt -p blastn -m 8 -e 1e-10");
+print"Now execute  extreact_info_of_blastn.pl\\n";
+system("perl \$path/scripts/extract_info_of_blastn.pl -ref \$ref -e1 \$front_enzyme -e2 \$later_enzyme -p \$path -dir \$result_dir");
+print"Now execute alignments_stats.pl\\n";
+system("perl \$path/scripts/alignments_stats.pl -ref \$ref -e1 \$front_enzyme -e2 \$later_enzyme -p \$path -dir \$result_dir");
+rating1();
+}
+else{ rating2();}
+
+print"Congratulations! The job is completed successfully!\nYou can find the final result in the file: characteristics_of_\${ref}_by_\${front_enzyme}_and_\${later_enzyme}.txt\n";
+
+sub parse_parameters {
+unless(\@ARGV){
+print STDERR "\nYou must input options and parameters, please use -h or -H for help\n";
+exit(0);
+}
+elsif(\@ARGV == 1){
+if(\$ARGV[0]=~/^-h\$/i){usage();}
+elsif(\$ARGV[0]=~/^-v\$/i){version();}
+else{
+print STDERR "\nIllegal inputs,please use -h or -H for help!\n";
+exit(0);
+}}
+else{
+while(\@ARGV){
+\$_=shift \@ARGV;
+if(\$_=~/^-ref\$/){\$ref=shift \@ARGV;}
+elsif(\$_=~/^-e1\$/){\$front_enzyme=shift \@ARGV;}
+elsif(\$_=~/^-e2\$/){\$later_enzyme=shift \@ARGV;}
+elsif(\$_=~/^-r1\$/){\$range1=shift \@ARGV;}
+elsif(\$_=~/^-r2\$/){\$range2=shift \@ARGV;}
+elsif(\$_=~/^-gff\$/){\$gff=shift \@ARGV;}
+elsif(\$_=~/^-b\$/){\$blast="yes";}
+else{
+print STDERR "Unknown cmmand line option:'\$_', please use -h or -H for help\n";
+exit(0);
+}
+}
+\$result_dir="\${ref}_\${front_enzyme}_\${later_enzyme}";
+}
+}
+
+sub usage {
+print STDERR <<EOQ;
+
+Usage:perl RestrictSimulation [-ref] <REFERENCE> [-e1] <ENZYME1> [-e2] <ENZYME2> [-r1] <left limit of the range, default 90> [-r2] <right limit of the range, default 750> [-gff] <filename of the GFF file corresponded to the reference>
+
+-ref	(mandatory) the name of the file containing the reference sequences. 
+        The file must be located in the "reference" directory;
+	The file must be in the "Fasta" format, like this:
+#########################################################################
+#	>chromsome1							#
+#	NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN				#
+#	>chromsome2							#
+#	NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN			#
+#########################################################################  
+	Other formats are not recognized by this software. And the "chromsomeX" must contains no blank space(s).
+-gff	(mandatory) the name of the GFF file corresponded to the reference file.
+        The file must be located in the "gff" directory;
+	The file must be in the "GFF" format, like this:
+#################################################################################################################
+#	seqid		source	type	start	end	score	strand	phase	attributes			#
+#	scaffold39120	GLEAN	mRNA	36514	50111	.	+	.	ID=OYG_10003188_10008591;	#
+#	scaffold39120	GLEAN	CDS	36514	36534	.	+	.	Parent=OYG_10003188_10008591;	#
+#	scaffold39120	GLEAN	CDS	43276	43353	.	+	.	Parent=OYG_10003188_10008591;	#
+#	scaffold39120	GLEAN	CDS	43766	43868	.	+	.	Parent=OYG_10003188_10008591;	#
+#	scaffold39120	GLEAN	CDS	44710	44741	.	+	.	Parent=OYG_10003188_10008591;	#
+#	scaffold39120	GLEAN	CDS	49875	50111	.	+	.	Parent=OYG_10003188_10008591;	#
+#	scaffold838	GLEAN	mRNA	36580	65627	.	-	.	ID=OYG_10003281_10026064;	#
+#################################################################################################################
+	For more information about the "GFF" format, please refer "http://www.plob.org/2011/12/02/655.html";
+-e1	(mandatory) the name of the first endonuclease of the double-enzyme pair,it can be all in upcase or downcase, or partly upcase and partly downcase;
+-e2	(mandatory) the name of the second endonuclease of the double-enzyme pair, it can be all in upcase or downcase, or partly upcase and partly downcase;
+-r1	(optional) the smaller number of the range of the digested sequence fragments lengths  you want to evaluate, default is 90;
+-r2	(optional) the larger number of the range of the digested sequence fragments lengths you want to evaluate, defalult is 750;
+
+The following enzymes are recognized by this software:
+EcoRI	MspI	AvaII	HinfI	AvaI	MseI	HindIII	BamHI	SalI	
+NdeI	PstI	XbaI	XhoI	NlaIII	
+
+EOQ
+exit(0);
+}
+
+sub version {
+print STDERR <<EOQ;
+
+RestrictSimulation  v1.0.1
+
+Copyright (C) 2014  IOCAS(Institute of Oceanology, Chinese Academy of Sciences).
+
+This is free software: you are free to change and redistribute it.
+
+There is NO WARRANTY, to the extent permitted by law.
+
+Written by Jinpeng Wang.
+
+If you have any problem about using this software, please send email to 'restricttoolkit at 163.com'.
+EOQ
+exit(0);
+}
+
+sub blastn {
+print STDERR <<EOQ;
+
+The blastn program will cost a lot of time, in our test, it costs 10 hours to align xxx sequences to the reference.
+
+If you want to use the -b option, you must do some preparations: you should format the nucleic acid database by using the following command:"formatdb -i Nucleic_db_file_name -p F –o T", replace the Nucleic_db_file_name with your reference file name.  
+
+Using the command under the "reference" directory or copy the files produced by the formatdb command into the "reference" directory.
+
+Only after doing this job, you can run the "RestrictSimulation" with the option "-b". 
+However,in the default setting, the "-b" option is disabled.
+If the "-b" option is activated, the software will run the blastn as the following command: blastall -i query.fasta -d db.seq -o blast.out -p blastn -m 8 -e 1e-10. 
+Of the command, the "query.fasta" will be the "seq_of_frags_in_range_of_REFERENCE_by_ENZYME1_and_ENZYME2.txt" produced during the software running. 
+The "db.seq" will be the REFERENCE file which is formated. 
+The output file will be named after the REFERENCE file and enzymes(ENZYME1, ENZYME2) as: blastn_alignments_of_REFERENCE_by_ENZYME1_and_ENZYME2.txt. 
+The output file format is defined by the "-m" option of blastall, we use "8" as default. The p-value is 1e-10 as default. 
+
+Please refer to "http://blast.st-va.ncbi.nlm.nih.gov/Blast.cgi" for more information about blastn.
+EOQ
+exit(0);
+}
+
+sub rating1 {
+open my \$ifh,"\$path/run_results/\$result_dir/characteristics_of_\${ref}_by_\${front_enzyme}_and_\${later_enzyme}.txt"||die"cannot open characteristics_of_\${ref}_by_\${front_enzyme}_and_\${later_enzyme}.txt";
+my (\$AA,\$CC,\$DD,\$EE,\$FF,\$GG);
+while(<\$ifh>){chomp;
+my \$line=\$_;
+if(\$line=~/^AA/){my \@line=split /\\t/, \$line; \$AA=\$line[2];}
+elsif(\$line=~/^CC/){my \@line=split /\\t/, \$line; \$CC=\$line[2];}
+elsif(\$line=~/^DD/){my \@line=split /\\t/, \$line; \$DD=\$line[2];}
+elsif(\$line=~/^EE/){my \@line=split /\\t/, \$line; \$EE=\$line[2];}
+elsif(\$line=~/^FF/){my \@line=split /\\t/, \$line; \$FF=\$line[2];}
+elsif(\$line=~/^GG/){my \@line=split /\\t/, \$line; \$GG=\$line[2];}
+}
+open my \$ofh,">>\$path/run_results/\$result_dir/characteristics_of_\${ref}_by_\${front_enzyme}_and_\${later_enzyme}.txt"||die"cannot open characteristics_of_\${ref}_by_\${front_enzyme}_and_\${later_enzyme}.txt";
+my (\$aa,\$cc,\$dd,\$ee,\$ff,\$gg);
+\$aa=92/9-(200/9)*\$AA;
+\$cc=20*\$CC-4;
+\$dd=(4/3)*\$DD+16/3;
+\$ee=20*\$EE;
+\$ff=14-20*\$FF;
+\$gg=(40/3)*\$GG-2;
+my \$score=\$aa/5+3*\$dd/10+\$cc/5+\$ee/10+\$ff/10+\$gg/10;
+printf \$ofh "HH\\tthe score of \${ref} by \${front_enzyme} and \${later_enzyme} is\\t%2.2f\n",\$score;
+}
+
+sub rating2{
+open my \$ifh,"\$path/run_results/\$result_dir/characteristics_of_\${ref}_by_\${front_enzyme}_and_\${later_enzyme}.txt"||die"cannot open characteristics_of_\${ref}_by_\${front_enzyme}_and_\${later_enzyme}.txt";
+my (\$AA,\$CC,\$DD,\$EE,\$FF);
+while(<\$ifh>){chomp;
+my \$line=\$_;
+if(\$line=~/^AA/){my \@line=split /\\t/, \$line; \$AA=\$line[2];}
+elsif(\$line=~/^CC/){my \@line=split /\\t/, \$line; \$CC=\$line[2];}
+elsif(\$line=~/^DD/){my \@line=split /\\t/, \$line; \$DD=\$line[2];}
+elsif(\$line=~/^EE/){my \@line=split /\\t/, \$line; \$EE=\$line[2];}
+elsif(\$line=~/^FF/){my \@line=split /\\t/, \$line; \$FF=\$line[2];}
+}
+open my \$ofh,">>\$path/run_results/\$result_dir/characteristics_of_\${ref}_by_\${front_enzyme}_and_\${later_enzyme}.txt"||die"cannot open characteristics_of_\${ref}_by_\${front_enzyme}_and_\${later_enzyme}.txt";
+my (\$aa,\$cc,\$dd,\$ee,\$ff,\$gg);
+\$aa=92/9-(200/9)*\$AA;
+\$cc=20*\$CC-4;
+\$dd=(4/3)*\$DD+16/3;
+\$ee=20*\$EE;
+\$ff=14-20*\$FF;
+\$gg=1;
+my \$score=\$aa/5+3*\$dd/10+\$cc/5+\$ee/10+\$ff/10+\$gg/10;
+printf \$ofh "HH\\tthe score of \${ref} by \${front_enzyme} and \${later_enzyme} is\\t%2.2f\n",\$score;
+}
+
+sub check_database {
+unless(-e "\$path/reference/\${ref}.nhr"){print "\\nCannot find the .nhr file of \$ref for blastn!\\n";blastn();}
+unless(-e "\$path/reference/\${ref}.nin"){print "\\nCannot find the .nin file of \$ref for blastn!\\n";blastn();}
+unless(-e "\$path/reference/\${ref}.nsd"){print "\\nCannot find the .nsd file of \$ref for blastn!\\n";blastn();}
+unless(-e "\$path/reference/\${ref}.nsi"){print "\\nCannot find the .nsi file of \$ref for blastn!\\n";blastn();}
+unless(-e "\$path/reference/\${ref}.nsq"){print "\\nCannot find the .nsq file of \$ref for blastn!\\n";blastn();}
+}
+EOF
+
+system "chmod u+x $path/RestrictSimulation";
+print"Congratulations! The executable RestrictSimulation is successfully created!\n";
